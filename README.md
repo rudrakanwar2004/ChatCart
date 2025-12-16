@@ -198,7 +198,6 @@ Tracks:
 * `recentProducts`
 * `chatHistory`
 
-Prevents hallucinations and enables personalization.
 
 ---
 
