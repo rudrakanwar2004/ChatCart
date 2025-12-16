@@ -32,7 +32,6 @@ The platform supports **electronics and fashion shopping**, user authentication,
   * "Add the 2nd one to cart"
   * "Products under ₹2000"
 * Uses **Ollama (llama3.2:1b)** locally
-* Prevents hallucinations using conversation memory
 
 ### 👑 Admin Features
 
