@@ -575,13 +575,11 @@ body {
   width: 80px;
   height: 80px;
   margin: 0 auto 1rem;
-  background: rgba(255, 255, 255, 0.1);
   border-radius: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .logo-icon svg {
@@ -622,7 +620,6 @@ body {
   line-height: 1.2;
   background: linear-gradient(135deg, #fff 0%, #f0f4ff 100%);
   -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
   background-clip: text;
   letter-spacing: -0.01em;
 }
@@ -840,7 +837,50 @@ body {
 }
 
 .logo-section {
-  flex-shrink: 0;
+  /* display: flex; */
+  align-items: center;
+}
+
+/* Entire brand is clickable */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+}
+
+/* Logo image */
+.brand-logo {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+}
+
+/* Brand text */
+.brand-text {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #ff9900;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Subtle hover effect */
+.brand:hover .brand-text {
+  color: #ff8c00;
+}
+
+/* Mobile tweak */
+@media (max-width: 768px) {
+  .brand-text {
+    font-size: 1.5rem;
+  }
+
+  .brand-logo {
+    width: 32px;
+    height: 32px;
+  }
 }
 
 .logo {
@@ -1127,7 +1167,7 @@ body {
 
 .feature-icon {
   color: #ff9900;
-  background: rgba(255, 153, 0, 0.1);
+  background-color: rgba(79, 70, 229, 0.4);
   padding: 1.5rem;
   border-radius: 50%;
   display: flex;
@@ -1317,9 +1357,11 @@ body {
 }
 
 .product-image img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  width: 200px;      /* or 100% */
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .product-info {
@@ -1535,8 +1577,6 @@ body {
 }
 
 .item-image {
-  width: 120px;
-  height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1546,8 +1586,8 @@ body {
 }
 
 .item-image img {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100px;
+  height: auto;
   object-fit: contain;
 }
 

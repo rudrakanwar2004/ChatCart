@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ShoppingCart, ShoppingBag, User, LogOut, Crown } from 'lucide-react'
-
+import vite from '../assets/vite.png'
 const Header = ({ cartItemsCount, user, onLogout }) => {
   const location = useLocation()
   const navigate = useNavigate()
@@ -67,9 +67,12 @@ const Header = ({ cartItemsCount, user, onLogout }) => {
       <div className="header-main">
         <div className="container">
           <div className="header-main-content">
-            <div className="logo-section">
-              <Link to={user ? "/home" : "/"} className="logo">ChatCart</Link>
-            </div>
+              <div className="logo-section">
+                <Link to={user ? "/home" : "/"} className="brand">
+                  <img src={vite} alt="ChatCart Logo" className="brand-logo" />
+                  <span className="brand-text">ChatCart</span>
+                </Link>
+              </div>
 
             {/* Navigation Links - Only show when user is logged in as regular user */}
             {user && !user.isAdmin && (

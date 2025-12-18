@@ -1,15 +1,12 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+// ChatBot.jsx — Ollama-only, final refined version
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, X, Minimize2, MessageCircle, User, Trash2, Download } from 'lucide-react';
 import ChatFitAvatar from '../assets/ChatFit.png';
 import UserMemoryService from '../UserMemories/userMemoryService';
 
-const OLLAMA_CONFIG = {
-  url: 'http://localhost:11434',
-  model: 'llama3.2:1b',
-  timeout: 45000
-};
+const OLLAMA_ENDPOINT = 'http://localhost:4000/api/ollama/generate'; // server prepends PRODUCT_CATALOG
 
-const ChatBot = ({ products, user, onAddToCart, cart }) => {
+const ChatBot = ({ products = [], user, onAddToCart, cart = [] }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -17,98 +14,51 @@ const ChatBot = ({ products, user, onAddToCart, cart }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showSuggestedQuestions, setShowSuggestedQuestions] = useState(true);
-  const [lastDisplayedProducts, setLastDisplayedProducts] = useState([]);
-  
-  // Dynamic conversation context with comprehensive tracking
-  const [conversationContext, setConversationContext] = useState({
-    // User query tracking
+
+  const suggestedQuestions = [
+    "What electronics do you have?",
+    "Show me fashion products",
+    "Recommend some top-rated electronics",
+    "Suggest something popular right now",
+    "Which one has the best rating?",
+    "What do you suggest for daily use?"
+  ];
+
+  // minimal session context we persist and send to server
+  const conversationContextRef = useRef({
     lastUserQuery: null,
-    lastUserIntent: null,
-    lastQueryTime: null,
-    
-    // Response tracking
-    lastBotResponse: null,
-    lastResponseType: null,
-    
-    // Product tracking
-    currentCategory: null,
-    activeFilters: {
-      maxPrice: null,
-      minRating: null,
-      category: null,
-      searchQuery: null
-    },
-    
-    // Conversation flow
-    conversationFlow: [],
-    currentTopic: null,
-    
-    // User preferences from memory
-    userPreferences: null,
-    
-    // Session tracking
-    sessionStartTime: new Date().toISOString(),
-    messageCount: 0
+    lastBotResponse: null
   });
 
-  // Refs for dynamic updates
-  const conversationContextRef = useRef(conversationContext);
-  const lastUserQueryRef = useRef(null);
-  const lastBotResponseRef = useRef(null);
-  const conversationHistoryRef = useRef([]);
-  
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
-  // Sync refs with state changes
   useEffect(() => {
-    conversationContextRef.current = conversationContext;
-  }, [conversationContext]);
-
-  // Initialize with user memory
-  useEffect(() => {
+    // Load user memory and greeting at mount or when user changes
     if (user && !user.isAdmin) {
-      initializeUserSession();
-    }
-  }, [user]);
+      const mem = UserMemoryService.getUserMemory(user.id);
+      if (mem && mem.conversationContext) {
+        conversationContextRef.current.lastUserQuery = mem.conversationContext.lastUserQuery || null;
+        conversationContextRef.current.lastBotResponse = mem.conversationContext.lastBotResponse || null;
+      }
 
-  const initializeUserSession = useCallback(() => {
-    const userMemory = UserMemoryService.getUserMemory(user.id);
-    
-    // Set user name if not set
-    if (!userMemory.userName && user.name) {
-      UserMemoryService.setUserName(user.id, user.name);
-    }
-    
-    // Load conversation context from memory
-    if (userMemory.conversationContext) {
-      const initialContext = {
-        ...conversationContext,
-        ...userMemory.conversationContext,
-        userPreferences: userMemory.preferences || null,
-        sessionStartTime: new Date().toISOString(),
-        messageCount: 0
-      };
-      
-      setConversationContext(initialContext);
-      conversationContextRef.current = initialContext;
-      
-      // Load conversation history
-      if (userMemory.chatHistory?.length > 0) {
-        conversationHistoryRef.current = userMemory.chatHistory.slice(-10);
+      if (messages.length === 0) {
+        const greeting = UserMemoryService.getPersonalizedGreeting(user.id, user.name || 'there');
+        setMessages([{ role: 'assistant', content: greeting, timestamp: new Date() }]);
+        // persist greeting as last exchange (if service supports it)
+        if (typeof UserMemoryService.setLastExchange === 'function') {
+          UserMemoryService.setLastExchange(user.id, null, greeting);
+        }
+        // Update persistently
+        UserMemoryService.updateConversationContext(user.id, {
+          lastUserQuery: conversationContextRef.current.lastUserQuery,
+          lastBotResponse: greeting
+        });
       }
     }
-    
-    // Set initial greeting
-    if (messages.length === 0) {
-      const userName = user.name || 'there';
-      const greeting = UserMemoryService.getPersonalizedGreeting(user.id, userName);
-      setMessages([{ role: 'assistant', content: greeting, timestamp: new Date() }]);
-      UserMemoryService.updateUserMemory(user.id, { isNewUser: false });
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Auto-scroll and resize
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -120,526 +70,264 @@ const ChatBot = ({ products, user, onAddToCart, cart }) => {
     }
   }, [inputMessage]);
 
-  // Sync cart with user memory
-  useEffect(() => {
-    if (user && !user.isAdmin && cart) {
-      const userMemory = UserMemoryService.getUserMemory(user.id);
-      if (JSON.stringify(userMemory.cartItems || []) !== JSON.stringify(cart)) {
-        UserMemoryService.updateUserMemory(user.id, { cartItems: cart });
-      }
-    }
-  }, [cart, user]);
+  // Utility: map product ids -> product objects (keeps ordering as ids appear)
+  const lookupProductsById = useCallback((ids = []) => {
+    const idSet = new Set(ids);
+    const found = products.filter(p => idSet.has(p.id));
+    const ordered = ids.map(id => found.find(f => f.id === id)).filter(Boolean);
+    return ordered;
+  }, [products]);
 
-  // Dynamic context updater
-  const updateContext = useCallback((updates, type = 'user_query') => {
-    const currentContext = conversationContextRef.current;
-    const newConversationFlow = [
-      ...currentContext.conversationFlow.slice(-5),
-      {
-        type,
-        timestamp: new Date().toISOString(),
-        ...updates
-      }
-    ];
+  // Call server proxy which attaches PRODUCT_CATALOG and session metadata
+  const callOllamaServer = useCallback(async (userMessage) => {
+    const lastUserQuery = conversationContextRef.current.lastUserQuery || '';
+    const lastBotResponse = conversationContextRef.current.lastBotResponse || '';
+    const currentCartIds = (cart || []).map(i => i.id);
 
-    const newContext = {
-      ...currentContext,
-      ...updates,
-      conversationFlow: newConversationFlow,
-      messageCount: currentContext.messageCount + 1,
-      lastUpdated: new Date().toISOString()
-    };
+    const instructionPrompt = `
+You are ChatFit, a precise e-commerce assistant. You MUST respond WITH ONLY a single JSON object and nothing else.
+SCHEMA:
+{
+  "action": "add_to_cart" | "recommend" | "none",
+  "product_ids": [],        // array of product ids from PRODUCT_CATALOG
+  "quantities": [],         // optional; aligns with product_ids
+  "message": "Short human-friendly reply to display to the user"
+}
 
-    conversationContextRef.current = newContext;
-    setConversationContext(newContext);
+RULES:
+1) If the user's message is an explicit ADD request (contains "add", "add to cart", "put", ordinal references like "1st", "2nd", "first", "second"), you MAY return action = "add_to_cart". Otherwise, do NOT return add_to_cart.
+2) If returning "add_to_cart", reference products from LAST_BOT_RESPONSE lists (or PRODUCT_CATALOG) and prefer NOT to add items already in CURRENT_CART unless user explicitly asks to increase quantity.
+3) If a product is already in CURRENT_CART, update quantity and respond: "Product already in cart. Updating quantity."
+4) If returning "recommend", choose up to 4 items from PRODUCT_CATALOG, exclude CURRENT_CART items, order by rating & relevance, and avoid duplicates.
+4) If ambiguous, return {"action":"none","product_ids":[],"message":"I couldn't identify which product to add or recommend. Could you clarify?"}
+5) Respond ONLY with valid JSON — no extra commentary.
+6) Use LAST_USER_QUERY and LAST_BOT_RESPONSE for context but prioritize current message.
 
-    // Persist to user memory
-    if (user && !user.isAdmin) {
-      UserMemoryService.updateConversationContext(user.id, {
-        ...newContext,
-        userPreferences: undefined // Don't persist preferences in conversation context
-      });
-    }
+SESSION DATA (server attaches):
+- CURRENT_CART: ${JSON.stringify(currentCartIds)}
+- LAST_USER_QUERY: ${JSON.stringify(lastUserQuery)}
+- LAST_BOT_RESPONSE: ${JSON.stringify(lastBotResponse)}
 
-    return newContext;
-  }, [user]);
+User's message: ${JSON.stringify(userMessage)}
+`;
 
-  // Detect user intent from message
-  const detectIntent = useCallback((message) => {
-    const lowerMessage = message.toLowerCase();
-    
-    if (lowerMessage.includes('add') && (lowerMessage.includes('cart') || lowerMessage.includes('number') || 
-        /\b(1st|2nd|3rd|4th|5th|first|second|third|fourth|fifth)\b/.test(lowerMessage))) {
-      return 'add_to_cart';
-    }
-    
-    if (lowerMessage.includes('cart') && (lowerMessage.includes('what') || lowerMessage.includes('show'))) {
-      return 'view_cart';
-    }
-    
-    if (lowerMessage.includes('electronic') || lowerMessage.includes('gadget') || lowerMessage.includes('tech')) {
-      return 'electronics_query';
-    }
-    
-    if (lowerMessage.includes('fashion') || lowerMessage.includes('clothing') || lowerMessage.includes('dress') || lowerMessage.includes('shirt')) {
-      return 'fashion_query';
-    }
-    
-    if (lowerMessage.includes('headphone') || lowerMessage.includes('earphone') || lowerMessage.includes('audio')) {
-      return 'specific_product_query';
-    }
-    
-    if (lowerMessage.includes('under') || lowerMessage.includes('below') || lowerMessage.includes('less than')) {
-      return 'price_filter_query';
-    }
-    
-    if (lowerMessage.includes('gift') || lowerMessage.includes('birthday') || lowerMessage.includes('present')) {
-      return 'gift_query';
-    }
-    
-    if (lowerMessage.includes('recommend') || lowerMessage.includes('suggest')) {
-      return 'recommendation_query';
-    }
-    
-    return 'general_query';
-  }, []);
-
-  // Get products based on context
-  const getContextualProducts = useCallback((intent, message = '') => {
-    const context = conversationContextRef.current;
-    const lowerMessage = message.toLowerCase();
-    
-    let filteredProducts = [...products];
-    
-    // Apply active filters from context
-    if (context.activeFilters.maxPrice) {
-      filteredProducts = filteredProducts.filter(p => p.priceINR <= context.activeFilters.maxPrice);
-    }
-    
-    if (context.activeFilters.category) {
-      filteredProducts = filteredProducts.filter(p => p.category === context.activeFilters.category);
-    }
-    
-    // Apply intent-specific filtering
-    switch(intent) {
-      case 'electronics_query':
-        filteredProducts = filteredProducts.filter(p => 
-          p.category === 'electronics' ||
-          p.title.toLowerCase().includes('phone') ||
-          p.title.toLowerCase().includes('laptop') ||
-          p.title.toLowerCase().includes('tablet') ||
-          p.title.toLowerCase().includes('watch')
-        );
-        break;
-        
-      case 'fashion_query':
-        filteredProducts = filteredProducts.filter(p => 
-          p.category === 'fashion' ||
-          p.title.toLowerCase().includes('shirt') ||
-          p.title.toLowerCase().includes('dress') ||
-          p.title.toLowerCase().includes('jacket') ||
-          p.title.toLowerCase().includes('clothing')
-        );
-        break;
-        
-      case 'specific_product_query':
-        if (lowerMessage.includes('headphone')) {
-          filteredProducts = filteredProducts.filter(p => 
-            p.title.toLowerCase().includes('headphone') ||
-            p.title.toLowerCase().includes('earphone') ||
-            p.category === 'electronics'
-          );
-        }
-        break;
-        
-      case 'gift_query':
-        filteredProducts = filteredProducts.filter(p => 
-          (p.rating?.rate || 0) >= 4.0 &&
-          (p.discount || 0) >= 10
-        );
-        break;
-        
-      case 'price_filter_query':
-        const priceMatch = lowerMessage.match(/(?:under|below|less than)\s*₹?\s*(\d+)/i);
-        if (priceMatch) {
-          const maxPrice = parseInt(priceMatch[1]);
-          updateContext({
-            activeFilters: { ...context.activeFilters, maxPrice }
-          });
-          filteredProducts = filteredProducts.filter(p => p.priceINR <= maxPrice);
-        }
-        break;
-    }
-    
-    // Sort by rating and limit
-    filteredProducts.sort((a, b) => (b.rating?.rate || 0) - (a.rating?.rate || 0));
-    return filteredProducts.slice(0, 5);
-  }, [products, updateContext]);
-
-  // Extract product from message with context awareness
-  const extractProductFromMessage = useCallback((message) => {
-    const lowerMessage = message.toLowerCase();
-    const currentProducts = lastDisplayedProducts.length > 0 ? lastDisplayedProducts : [];
-    
-    if (currentProducts.length === 0) return null;
-
-    // Position mapping with context awareness
-    const positionMap = {
-      'first': 0, '1st': 0, 'number 1': 0, '1': 0, 'one': 0,
-      'second': 1, '2nd': 1, 'number 2': 1, '2': 1, 'two': 1,
-      'third': 2, '3rd': 2, 'number 3': 2, '3': 2, 'three': 2,
-      'fourth': 3, '4th': 3, 'number 4': 3, '4': 3, 'four': 3,
-      'fifth': 4, '5th': 4, 'number 5': 4, '5': 4, 'five': 4
-    };
-
-    // Check for positional references
-    for (const [key, index] of Object.entries(positionMap)) {
-      if (lowerMessage.includes(key) && currentProducts.length > index) {
-        return currentProducts[index];
-      }
-    }
-
-    // Check for product name mentions with fuzzy matching
-    for (const product of currentProducts) {
-      const productTitle = product.title?.toLowerCase();
-      if (!productTitle) continue;
-      
-      // Exact match
-      if (lowerMessage.includes(productTitle)) {
-        return product;
-      }
-      
-      // Partial word matching
-      const productWords = productTitle.split(' ');
-      const hasMatch = productWords.some(word => 
-        word.length > 3 && lowerMessage.includes(word)
-      );
-      
-      if (hasMatch) {
-        return product;
-      }
-      
-      // Category matching from context
-      const context = conversationContextRef.current;
-      if (context.currentCategory && product.category === context.currentCategory) {
-        const categoryKeywords = {
-          'electronics': ['phone', 'laptop', 'tablet', 'watch', 'headphone'],
-          'fashion': ['shirt', 'dress', 'jacket', 'clothing', 'suit']
-        };
-        
-        if (categoryKeywords[context.currentCategory]?.some(keyword => 
-          lowerMessage.includes(keyword) && productTitle.includes(keyword)
-        )) {
-          return product;
-        }
-      }
-    }
-
-    return null;
-  }, [lastDisplayedProducts]);
-
-  const extractQuantity = useCallback((message) => {
-    const lowerMessage = message.toLowerCase();
-    
-    // Clean message from position indicators
-    const cleanMessage = lowerMessage
-      .replace(/(\d+)(?:st|nd|rd|th)/gi, '')
-      .replace(/(?:first|second|third|fourth|fifth|one|two|three|four|five)/gi, '');
-
-    // Look for quantity patterns
-    const quantityPatterns = [
-      /(\d+)\s*x\s*(?:of)?/,
-      /(\d+)\s*quantity/,
-      /(\d+)\s*items?/,
-      /(\d+)\s*pieces?/,
-      /add\s*(\d+)\s*(?:more)?/,
-      /(\d+)\s*units?/
-    ];
-
-    for (const pattern of quantityPatterns) {
-      const match = cleanMessage.match(pattern);
-      if (match) return parseInt(match[1]);
-    }
-
-    return 1;
-  }, []);
-
-  const handleAddToCart = useCallback((product, quantity = 1) => {
     try {
-      onAddToCart(product, quantity);
-      UserMemoryService.updateCartItem(user.id, { ...product, quantity }, 'add');
-      UserMemoryService.recordProductInteraction(user.id, product, "cart_add");
-      UserMemoryService.addMentionedProduct(user.id, product);
-      return true;
-    } catch (error) {
-      console.error('Error adding to cart:', error);
-      return false;
-    }
-  }, [user, onAddToCart]);
+      console.log("📤 Sending request to server /api/ollama/generate");
+      console.log("📦 Cart IDs:", currentCartIds);
+      console.log("🧠 Last user query:", lastUserQuery);
+      console.log("🤖 Last bot response:", lastBotResponse);
+      console.log("📝 Prompt sent to Ollama:\n", instructionPrompt);
 
-  const formatProductResponse = useCallback((productList, context = null) => {
-    if (!productList || productList.length === 0) {
-      return "I couldn't find any products matching your request. Please try a different search term.";
-    }
-
-    setLastDisplayedProducts(productList);
-
-    let response = "";
-    if (context) {
-      response += `${context}\n\n`;
-    }
-    
-    response += "Here are the products I found:\n\n";
-
-    productList.forEach((product, index) => {
-      const discountText = product.discount ? ` (${product.discount}% off)` : '';
-      const ratingText = product.rating ? ` ⭐${product.rating.rate}` : '';
-      response += `${index + 1}. ${product.title} - ₹${product.priceINR}${discountText}${ratingText}\n`;
-    });
-
-    response += `\nYou can say "add the 1st one" or "add number 3" to add any product to your cart!`;
-
-    return response;
-  }, []);
-
-  const getCartSummary = useCallback(() => {
-    if (!cart || cart.length === 0) {
-      return "Your cart is currently empty. Would you like to browse some products?";
-    }
-
-    let summary = "Here's what's in your cart:\n\n";
-    cart.forEach((item, index) => {
-      summary += `${index + 1}. ${item.title} - ₹${item.priceINR} x ${item.quantity} = ₹${item.priceINR * item.quantity}\n`;
-    });
-
-    const total = cart.reduce((sum, item) => sum + (item.priceINR * item.quantity), 0);
-    summary += `\nTotal: ₹${total}\n\nWould you like to proceed to checkout or continue shopping?`;
-
-    return summary;
-  }, [cart]);
-
-  // Dynamic response generator with context awareness
-  const generateContextAwareResponse = useCallback(async (userMessage) => {
-    const intent = detectIntent(userMessage);
-    const context = conversationContextRef.current;
-    
-    // Update context with current query
-    updateContext({
-      lastUserQuery: userMessage,
-      lastUserIntent: intent,
-      lastQueryTime: new Date().toISOString(),
-      currentTopic: intent
-    });
-
-    // Handle specific intents directly
-    switch(intent) {
-      case 'view_cart':
-        return getCartSummary();
-        
-      case 'add_to_cart':
-        const product = extractProductFromMessage(userMessage);
-        const quantity = extractQuantity(userMessage);
-        
-        if (product) {
-          const success = handleAddToCart(product, quantity);
-          if (success) {
-            const response = `✅ Added ${quantity}x "${product.title}" to your cart for ₹${product.priceINR * quantity}!`;
-            
-            // Get similar products
-            const similarProducts = products
-              .filter(p => p.category === product.category && p.id !== product.id)
-              .sort((a, b) => (b.rating?.rate || 0) - (a.rating?.rate || 0))
-              .slice(0, 3);
-            
-            if (similarProducts.length > 0) {
-              return response + `\n\n🛍️ You might also like:\n${similarProducts.map(p => 
-                `• ${p.title} - ₹${p.priceINR} ⭐${p.rating?.rate || 'N/A'}`
-              ).join('\n')}`;
-            }
-            return response;
-          }
-          return "Sorry, I couldn't add that item to your cart. Please try again.";
-        }
-        return "I couldn't find the specific product you mentioned. Please refer to a product from the list above using numbers like 'add the 2nd one' or 'add number 3'.";
-    }
-
-    // For other queries, get contextual products
-    const contextualProducts = getContextualProducts(intent, userMessage);
-    
-    if (contextualProducts.length > 0) {
-      let contextMessage = "Here are the products I found:";
-      
-      if (intent === 'electronics_query') {
-        contextMessage = "Here are our electronics products:";
-        updateContext({ currentCategory: 'electronics' });
-      } else if (intent === 'fashion_query') {
-        contextMessage = "Here are our fashion products:";
-        updateContext({ currentCategory: 'fashion' });
-      } else if (intent === 'gift_query') {
-        contextMessage = "Here are some great gift ideas:";
-      } else if (context.activeFilters.maxPrice) {
-        contextMessage = `Here are products under ₹${context.activeFilters.maxPrice}:`;
-      }
-      
-      return formatProductResponse(contextualProducts, contextMessage);
-    }
-
-    // Fallback to Ollama for complex queries
-    return await generateOllamaResponse(userMessage, intent);
-  }, [detectIntent, updateContext, getCartSummary, extractProductFromMessage, extractQuantity, handleAddToCart, products, getContextualProducts, formatProductResponse]);
-
-  // Enhanced Ollama response with comprehensive context
-  const generateOllamaResponse = useCallback(async (userMessage, intent) => {
-    try {
-      const context = conversationContextRef.current;
-      const userMemory = UserMemoryService.getUserMemory(user.id);
-      
-      // Build comprehensive context string
-      const contextParts = [];
-      
-      if (context.lastUserQuery && context.lastBotResponse) {
-        contextParts.push(`Previous exchange:\n- You asked: "${context.lastUserQuery}"\n- I responded: "${context.lastBotResponse.substring(0, 100)}..."`);
-      }
-      
-      if (context.currentCategory) {
-        contextParts.push(`We're currently discussing ${context.currentCategory} products.`);
-      }
-      
-      if (context.activeFilters.maxPrice) {
-        contextParts.push(`You're looking for products under ₹${context.activeFilters.maxPrice}.`);
-      }
-      
-      if (context.currentTopic) {
-        contextParts.push(`Current topic: ${context.currentTopic.replace('_', ' ')}`);
-      }
-      
-      // Get relevant products based on current context
-      const relevantProducts = getContextualProducts(intent, userMessage);
-      
-      const availableProducts = relevantProducts.slice(0, 10).map((p, i) =>
-        `${i + 1}. ${p.title}: ₹${p.priceINR} (${p.category}, ${p.rating?.rate || 'N/A'}⭐)`
-      ).join('\n');
-
-      const conversationHistory = conversationHistoryRef.current.slice(-2).map(msg => 
-        `User: ${msg.userMessage}\nAssistant: ${msg.botResponse}`
-      ).join('\n\n');
-
-      const prompt = `
-You are ChatFit, an intelligent shopping assistant for ChatCart. You MUST consider the entire conversation context.
-
-IMPORTANT CONTEXT:
-${contextParts.join('\n')}
-
-CONVERSATION HISTORY:
-${conversationHistory || 'No previous conversation in this session.'}
-
-CURRENT SITUATION:
-- User's message: "${userMessage}"
-- User's intent: ${intent}
-- Active filters: ${context.activeFilters.maxPrice ? `Price under ₹${context.activeFilters.maxPrice}` : 'None'}
-- Current category focus: ${context.currentCategory || 'None'}
-
-AVAILABLE PRODUCTS (use ONLY these - do NOT invent products):
-${availableProducts}
-
-CRITICAL INSTRUCTIONS:
-1. Remember the context above - this is crucial for a natural conversation
-2. If user asks about products, only suggest from AVAILABLE PRODUCTS
-3. If context has price filter, respect it in your recommendations
-4. If we were discussing a specific category, continue in that context
-5. Be helpful, concise, and maintain conversation flow
-6. If user refers to previous products, use the context to understand which ones
-
-ASSISTANT (responding with full context awareness):`;
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), OLLAMA_CONFIG.timeout);
-
-      const response = await fetch(`${OLLAMA_CONFIG.url}/api/generate`, {
+      const response = await fetch(OLLAMA_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: OLLAMA_CONFIG.model,
-          prompt: prompt,
+          model: 'llama3.2',
+          prompt: instructionPrompt,
           stream: false,
-          options: { 
-            temperature: 0.3,  // Lower temperature for more consistent, context-aware responses
-            top_k: 40,
-            top_p: 0.8,
-            repeat_penalty: 1.2,  // Penalize repetition to avoid hallucinations
-            num_predict: 300  // Limit response length
+          options: { temperature: 0.05, top_p: 0.9, max_tokens: 30 },
+          useProductContext: true,
+          extraContext: {
+            current_cart_ids: currentCartIds,
+            last_user_query: lastUserQuery,
+            last_bot_response: lastBotResponse
           }
-        }),
-        signal: controller.signal
+        })
       });
 
-      clearTimeout(timeoutId);
-
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status}`);
+        const errText = await response.text().catch(() => response.statusText);
+        throw new Error(`Server/Ollama error: ${response.status} ${errText}`);
       }
 
       const data = await response.json();
-      return data.response || data.output || data.text || JSON.stringify(data);
-      
-    } catch (error) {
-      console.error('Error generating Ollama response:', error);
-      
-      // Intelligent fallback based on context
-      const context = conversationContextRef.current;
-      if (context.lastUserIntent === 'price_filter_query' && context.activeFilters.maxPrice) {
-        return `I apologize for the technical issue. Based on our conversation, you were looking for products under ₹${context.activeFilters.maxPrice}. Would you like me to show you those again?`;
-      } else if (context.currentCategory) {
-        return `I'm having trouble connecting. You were looking at ${context.currentCategory} products. Would you like to see those again?`;
-      }
-      
-      return "I apologize, but I'm having trouble processing your request right now. Please try asking about specific products or your cart.";
+      const raw = data.response || data.output || data.text || (data?.choices && data.choices[0]?.text) || JSON.stringify(data);
+      console.log('⬅️ Ollama raw response:', raw);
+      return raw;
+    } catch (err) {
+      console.error('Error calling Ollama server:', err);
+      throw err;
     }
-  }, [user, getContextualProducts]);
+  }, [cart]);
 
+  // Robust JSON extractor: returns parsed object or null
+  const extractJSON = (text) => {
+    if (!text || typeof text !== 'string') return null;
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start === -1 || end === -1) return null;
+    const candidate = text.slice(start, end + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch (e) {
+      try {
+        const cleaned = candidate.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+        return JSON.parse(cleaned);
+      } catch (e2) {
+        return null;
+      }
+    }
+  };
+
+  // Main message processing — Ollama-only flow
   const processUserMessage = async (userMessage) => {
+    if (!user || user.isAdmin) return;
     setIsLoading(true);
     setError(null);
     setShowSuggestedQuestions(false);
 
+    console.log("➡️ processUserMessage START");
+    console.log("🧑 User message:", userMessage);
+    console.log("🛒 Current cart:", cart);
+    console.log("🧠 Last context:", conversationContextRef.current);
+
+    // Add user's message to UI
+    const userMsg = { role: 'user', content: userMessage, timestamp: new Date() };
+    setMessages(prev => [...prev, userMsg]);
+
     try {
-      // Add user message to UI
-      const userMsg = { role: 'user', content: userMessage, timestamp: new Date() };
-      setMessages(prev => [...prev, userMsg]);
+      const raw = await callOllamaServer(userMessage);
+      const parsed = extractJSON(typeof raw === 'string' ? raw : JSON.stringify(raw));
+      console.log('🔍 Parsed JSON from response:', parsed);
 
-      // Generate context-aware response
-      const aiResponse = await generateContextAwareResponse(userMessage);
+      // Fallback: show raw model text if parsing fails
+      if (!parsed || !parsed.action) {
+        const fallbackText = typeof raw === 'string' ? raw : JSON.stringify(raw);
+        const assistantMsg = { role: 'assistant', content: fallbackText, timestamp: new Date() };
+        setMessages(prev => [...prev, assistantMsg]);
 
-      // Add assistant response
-      const assistantMsg = { role: 'assistant', content: aiResponse, timestamp: new Date() };
+        // Persist last exchange if service supports
+        if (typeof UserMemoryService.setLastExchange === 'function') {
+          UserMemoryService.setLastExchange(user.id, userMessage, fallbackText);
+        }
+        conversationContextRef.current.lastUserQuery = userMessage;
+        conversationContextRef.current.lastBotResponse = fallbackText;
+        UserMemoryService.updateConversationContext(user.id, { lastUserQuery: userMessage, lastBotResponse: fallbackText });
+
+        return;
+      }
+
+      // Handle structured actions
+      const action = parsed.action;
+      const productIds = Array.isArray(parsed.product_ids) ? parsed.product_ids : [];
+      const quantities = Array.isArray(parsed.quantities) ? parsed.quantities : [];
+      const message = parsed.message || (action === 'add_to_cart' ? 'Added to cart.' : (action === 'recommend' ? 'Here are some recommendations.' : "I couldn't find anything."));
+
+      if (action === 'add_to_cart') {
+        console.log("🛒 ADD_TO_CART action received from Ollama");
+        console.log("🆔 Product IDs to add:", productIds);
+        console.log("🔢 Quantities:", quantities);
+
+        const chosen = lookupProductsById(productIds);
+        const added = [];
+        const updated = [];
+
+        for (let i = 0; i < chosen.length; i++) {
+          const p = chosen[i];
+          if (!p) continue;
+          const q = (quantities[i] && Number.isInteger(quantities[i]) && quantities[i] > 0) ? quantities[i] : 1;
+          console.log(`➕ Processing add: ${q}x "${p.title}" (ID: ${p.id})`);
+
+          const already = (cart || []).some(ci => ci.id === p.id);
+          if (already) {
+            // If already in cart, we update quantity (use onAddToCart to increment existing quantity)
+            console.log(`⚠️ Product already in cart -> updating quantity for ID ${p.id}`);
+            try {
+              onAddToCart(p, q); // app's addToCart merges/increments
+            } catch (err) {
+              console.warn('onAddToCart error while updating existing item:', err);
+            }
+            // update memory accordingly
+            UserMemoryService.updateCartItem(user.id, { ...p, quantity: q, addedViaChatbot: true }, 'add');
+            UserMemoryService.recordProductInteraction(user.id, p, 'cart_add');
+            UserMemoryService.addMentionedProduct(user.id, p);
+            updated.push(`${q}x "${p.title}"`);
+          } else {
+            // Not present -> add
+            try {
+              onAddToCart(p, q);
+            } catch (err) {
+              console.warn('onAddToCart error while adding item:', err);
+            }
+            UserMemoryService.updateCartItem(user.id, { ...p, quantity: q, addedViaChatbot: true }, 'add');
+            UserMemoryService.recordProductInteraction(user.id, p, 'cart_add');
+            UserMemoryService.addMentionedProduct(user.id, p);
+            added.push(`${q}x "${p.title}"`);
+          }
+        }
+
+        // Build user-facing text depending on adds vs updates
+        let assistantText = '';
+        if (added.length > 0) assistantText += `✅ Added to cart: ${added.join(', ')}.`;
+        if (updated.length > 0) {
+          if (assistantText) assistantText += ' ';
+          assistantText += `⚠️ Product(s) already in cart — updated quantity: ${updated.join(', ')}.`;
+        }
+        if (!assistantText) assistantText = `I couldn't add items (they may already be in the cart). ${message}`;
+
+        const assistantMsg = { role: 'assistant', content: assistantText, timestamp: new Date() };
+        setMessages(prev => [...prev, assistantMsg]);
+
+        console.log("💾 Saving memory:");
+        console.log("   Last user query:", userMessage);
+        console.log("   Last bot response:", assistantText);
+        if (typeof UserMemoryService.setLastExchange === 'function') {
+          UserMemoryService.setLastExchange(user.id, userMessage, assistantText);
+        }
+        conversationContextRef.current.lastUserQuery = userMessage;
+        conversationContextRef.current.lastBotResponse = assistantText;
+        UserMemoryService.updateConversationContext(user.id, { lastUserQuery: userMessage, lastBotResponse: assistantText });
+
+        return;
+      }
+
+      if (action === 'recommend') {
+        console.log("🤖 RECOMMEND action received from Ollama");
+        console.log("🆔 Product IDs to recommend:", productIds);
+        const recProducts = lookupProductsById(productIds).filter(Boolean);
+        // Exclude any that are currently in cart
+        const filtered = recProducts.filter(p => !(cart || []).some(ci => ci.id === p.id));
+
+        let assistText = message;
+        if (filtered.length > 0) {
+          assistText += '\n\n' + filtered.map((p, i) => `${i + 1}. ${p.title} - ₹${p.priceINR} ⭐${p.rating?.rate || 'N/A'}`).join('\n');
+        } else {
+          assistText += '\n\nNo recommended items available (they may already be in your cart).';
+        }
+
+        const assistantMsg = { role: 'assistant', content: assistText, timestamp: new Date() };
+        setMessages(prev => [...prev, assistantMsg]);
+
+        if (typeof UserMemoryService.setLastExchange === 'function') {
+          UserMemoryService.setLastExchange(user.id, userMessage, assistText);
+        }
+        conversationContextRef.current.lastUserQuery = userMessage;
+        conversationContextRef.current.lastBotResponse = assistText;
+        UserMemoryService.updateConversationContext(user.id, { lastUserQuery: userMessage, lastBotResponse: assistText });
+
+        return;
+      }
+
+      // action === 'none' or unknown: show the message
+      const assistantMsg = {
+        role: 'assistant',
+        content: parsed.message || "I couldn't determine an action. Please clarify.",
+        timestamp: new Date()
+      };
       setMessages(prev => [...prev, assistantMsg]);
 
-      // Update context with this interaction
-      updateContext({
-        lastBotResponse: aiResponse,
-        lastResponseType: 'assistant_response'
-      }, 'assistant_response');
+      if (typeof UserMemoryService.setLastExchange === 'function') {
+        UserMemoryService.setLastExchange(user.id, userMessage, assistantMsg.content);
+      }
+      conversationContextRef.current.lastUserQuery = userMessage;
+      conversationContextRef.current.lastBotResponse = assistantMsg.content;
+      UserMemoryService.updateConversationContext(user.id, { lastUserQuery: userMessage, lastBotResponse: assistantMsg.content });
 
-      // Update conversation history
-      conversationHistoryRef.current = [
-        ...conversationHistoryRef.current.slice(-9),
-        { userMessage, botResponse: aiResponse, timestamp: new Date().toISOString() }
-      ];
-
-      // Save to user memory
-      UserMemoryService.addChatHistory(user.id, userMessage, aiResponse);
-
-    } catch (error) {
-      console.error('Error processing message:', error);
-      setError(error.message);
-      
-      const errorMsg = { 
-        role: 'assistant', 
-        content: "I apologize, but I'm having trouble processing your request. Please try again in a moment.",
-        timestamp: new Date(),
-        isError: true
-      };
-      setMessages(prev => [...prev, errorMsg]);
+    } catch (err) {
+      console.error('Processing message error:', err);
+      setError(err.message || 'Unknown error');
+      const assistantMsg = { role: 'assistant', content: "I couldn't talk to the recommender right now — please try again later.", timestamp: new Date() };
+      setMessages(prev => [...prev, assistantMsg]);
     } finally {
       setIsLoading(false);
     }
@@ -647,9 +335,10 @@ ASSISTANT (responding with full context awareness):`;
 
   const handleSendMessage = () => {
     if (!inputMessage.trim() || isLoading) return;
-    const message = inputMessage.trim();
+    console.log("🟢 USER INPUT:", inputMessage);
+    const msg = inputMessage.trim();
     setInputMessage('');
-    processUserMessage(message);
+    processUserMessage(msg);
   };
 
   const handleKeyPress = (e) => {
@@ -659,81 +348,19 @@ ASSISTANT (responding with full context awareness):`;
     }
   };
 
-  const handleSuggestedQuestion = (question) => {
-    processUserMessage(question);
-  };
-
   const clearChatHistory = () => {
     setMessages([]);
-    setLastDisplayedProducts([]);
-    setConversationContext({
-      lastUserQuery: null,
-      lastUserIntent: null,
-      lastQueryTime: null,
-      lastBotResponse: null,
-      lastResponseType: null,
-      currentCategory: null,
-      activeFilters: {
-        maxPrice: null,
-        minRating: null,
-        category: null,
-        searchQuery: null
-      },
-      conversationFlow: [],
-      currentTopic: null,
-      userPreferences: null,
-      sessionStartTime: new Date().toISOString(),
-      messageCount: 0
-    });
-    
-    conversationContextRef.current = {
-      lastUserQuery: null,
-      lastUserIntent: null,
-      lastQueryTime: null,
-      lastBotResponse: null,
-      lastResponseType: null,
-      currentCategory: null,
-      activeFilters: {
-        maxPrice: null,
-        minRating: null,
-        category: null,
-        searchQuery: null
-      },
-      conversationFlow: [],
-      currentTopic: null,
-      userPreferences: null,
-      sessionStartTime: new Date().toISOString(),
-      messageCount: 0
-    };
-    
-    conversationHistoryRef.current = [];
-    setShowSuggestedQuestions(true);
-    
-    if (user && !user.isAdmin) {
-      const userName = user.name || 'there';
-      const greeting = UserMemoryService.getPersonalizedGreeting(user.id, userName);
-      setMessages([{ role: 'assistant', content: greeting, timestamp: new Date() }]);
-      
-      UserMemoryService.updateConversationContext(user.id, {
-        lastUserQuery: null,
-        lastUserIntent: null,
-        currentCategory: null,
-        activeFilters: {
-          maxPrice: null,
-          minRating: null,
-          category: null,
-          searchQuery: null
-        },
-        conversationFlow: []
-      });
+    conversationContextRef.current = { lastUserQuery: null, lastBotResponse: null };
+    UserMemoryService.updateConversationContext(user.id, { lastUserQuery: null, lastBotResponse: null });
+    const greeting = UserMemoryService.getPersonalizedGreeting(user.id, user.name || 'there');
+    setMessages([{ role: 'assistant', content: greeting, timestamp: new Date() }]);
+    if (typeof UserMemoryService.setLastExchange === 'function') {
+      UserMemoryService.setLastExchange(user.id, null, greeting);
     }
   };
 
   const exportChatHistory = () => {
-    const chatText = messages.map(msg => 
-      `${msg.role === 'user' ? 'You' : 'ChatFit'}: ${msg.content}\n${msg.timestamp.toLocaleString()}`
-    ).join('\n\n');
-    
+    const chatText = messages.map(msg => `${msg.role === 'user' ? 'You' : 'ChatFit'}: ${msg.content}\n${msg.timestamp.toLocaleString()}`).join('\n\n');
     const blob = new Blob([chatText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -745,26 +372,13 @@ ASSISTANT (responding with full context awareness):`;
     URL.revokeObjectURL(url);
   };
 
-  const suggestedQuestions = useMemo(() => [
-    "What electronics do you have?",
-    "Show me fashion products",
-    "What's in my cart?",
-    "Show me products under ₹2000",
-    "Help me find wireless headphones"
-  ], []);
-
   if (!user || user.isAdmin) return null;
 
   return (
     <>
       {!isOpen && (
-        <button 
-          className="chat-bot-toggle"
-          onClick={() => setIsOpen(true)}
-          aria-label="Open ChatFit Assistant"
-        >
-          <MessageCircle size={20} />
-          <span>ChatFit Assistant</span>
+        <button className="chat-bot-toggle" onClick={() => setIsOpen(true)} aria-label="Open ChatFit Assistant">
+          <MessageCircle size={20} /><span>ChatFit Assistant</span>
         </button>
       )}
 
@@ -772,143 +386,63 @@ ASSISTANT (responding with full context awareness):`;
         <div className={`chat-bot ${isMinimized ? 'minimized' : ''}`}>
           <div className="chat-header" onClick={() => setIsMinimized(!isMinimized)}>
             <div className="chat-title">
-              <img 
-                src={ChatFitAvatar} 
-                alt="ChatFit" 
-                style={{ width: '24px', height: '24px', borderRadius: '50%' }}
-              />
+              <img src={ChatFitAvatar} alt="ChatFit" style={{ width: 24, height: 24, borderRadius: '50%' }} />
               <span>ChatFit Assistant</span>
-              <div className="chat-status">
-                <div className="status-dot" />
-                <span>Online</span>
-              </div>
+              <div className="chat-status"><div className="status-dot" /><span>Online</span></div>
             </div>
             <div className="chat-actions">
-              <button 
-                className="action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  exportChatHistory();
-                }}
-                title="Export Chat"
-                aria-label="Export chat"
-              >
-                <Download size={16} />
-              </button>
-              <button 
-                className="action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  clearChatHistory();
-                }}
-                title="Clear Chat"
-                aria-label="Clear chat"
-              >
-                <Trash2 size={16} />
-              </button>
-              <button 
-                className="action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsMinimized(!isMinimized);
-                }}
-                title={isMinimized ? "Maximize" : "Minimize"}
-                aria-label={isMinimized ? "Maximize chat" : "Minimize chat"}
-              >
-                <Minimize2 size={16} />
-              </button>
-              <button 
-                className="action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsOpen(false);
-                }}
-                title="Close"
-                aria-label="Close chat"
-              >
-                <X size={16} />
-              </button>
+              <button className="action-btn" onClick={(e) => { e.stopPropagation(); exportChatHistory(); }} title="Export Chat" aria-label="Export chat"><Download size={16} /></button>
+              <button className="action-btn" onClick={(e) => { e.stopPropagation(); clearChatHistory(); }} title="Clear Chat" aria-label="Clear chat"><Trash2 size={16} /></button>
+              <button className="action-btn" onClick={(e) => { e.stopPropagation(); setIsMinimized(!isMinimized); }} title={isMinimized ? "Maximize" : "Minimize"} aria-label={isMinimized ? "Maximize chat" : "Minimize chat"}><Minimize2 size={16} /></button>
+              <button className="action-btn" onClick={(e) => { e.stopPropagation(); setIsOpen(false); }} title="Close" aria-label="Close chat"><X size={16} /></button>
             </div>
           </div>
 
           {!isMinimized && (
             <>
-              {error && (
-                <div className="error-banner" role="alert">
-                  <span>{error}</span>
-                  <button 
-                    className="error-close"
-                    onClick={() => setError(null)}
-                    aria-label="Close error"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              )}
+              {error && <div className="error-banner" role="alert"><span>{error}</span><button className="error-close" onClick={() => setError(null)} aria-label="Close error"><X size={16} /></button></div>}
 
               <div className="chat-messages" role="log" aria-live="polite">
-                {messages.map((message, index) => (
-                  <div key={index} className={`message ${message.role}`}>
-                    <div className="message-avatar">
-                      {message.role === 'user' ? (
-                        <User size={18} />
-                      ) : (
-                        <img 
-                          src={ChatFitAvatar} 
-                          alt="ChatFit"
-                          className="message-avatar-img"
-                        />
-                      )}
-                    </div>
+                {messages.map((m, idx) => (
+                  <div key={idx} className={`message ${m.role}`}>
+                    <div className="message-avatar">{m.role === 'user' ? <User size={18} /> : <img src={ChatFitAvatar} alt="ChatFit" className="message-avatar-img" />}</div>
                     <div className="message-content">
-                      <p>{message.content}</p>
-                      <div className="message-timestamp">
-                        {message.timestamp.toLocaleTimeString([], { 
-                          hour: '2-digit', 
-                          minute: '2-digit' 
-                        })}
-                      </div>
+                      <p>{m.content}</p>
+                      <div className="message-timestamp">{m.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                     </div>
                   </div>
                 ))}
-                
+
                 {isLoading && (
                   <div className="message assistant loading">
-                    <div className="message-avatar">
-                      <img 
-                        src={ChatFitAvatar} 
-                        alt="ChatFit"
-                        className="message-avatar-img"
-                      />
-                    </div>
+                    <div className="message-avatar"><img src={ChatFitAvatar} alt="ChatFit" className="message-avatar-img" /></div>
                     <div className="message-content">
-                      <div className="typing-indicator">
-                        <span />
-                        <span />
-                        <span />
-                      </div>
+                      <div className="typing-indicator"><span /><span /><span /></div>
                       <div className="typing-text">ChatFit is thinking...</div>
                     </div>
                   </div>
                 )}
-                
+
                 <div ref={messagesEndRef} />
               </div>
 
               {showSuggestedQuestions && messages.length <= 2 && (
                 <div className="suggested-questions">
-                  <div className="suggested-title">Quick questions to get started</div>
+                  <div className="suggested-title">Try asking</div>
                   <div className="question-chips">
-                    {suggestedQuestions.map((question, index) => (
+                    {suggestedQuestions.map((q, i) => (
                       <button
-                        key={index}
+                        key={i}
                         className="question-chip"
-                        onClick={() => handleSuggestedQuestion(question)}
+                        onClick={() => {
+                          console.log("🟡 Suggested question clicked:", q);
+                          processUserMessage(q);
+                        }}
                         disabled={isLoading}
-                        aria-label={`Suggested question: ${question}`}
+                        aria-label={`Suggested question: ${q}`}
                       >
                         <MessageCircle size={14} />
-                        {question}
+                        {q}
                       </button>
                     ))}
                   </div>
@@ -916,25 +450,8 @@ ASSISTANT (responding with full context awareness):`;
               )}
 
               <div className="chat-input-wrapper">
-                <textarea
-                  ref={textareaRef}
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Type your message... (Press Enter to send)"
-                  disabled={isLoading}
-                  rows="1"
-                  aria-label="Chat input"
-                />
-                <button
-                  className="send-btn"
-                  onClick={handleSendMessage}
-                  disabled={!inputMessage.trim() || isLoading}
-                  title="Send message"
-                  aria-label="Send message"
-                >
-                  <Send size={18} />
-                </button>
+                <textarea ref={textareaRef} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Type your message... (Press Enter to send)" disabled={isLoading} rows="1" aria-label="Chat input" />
+                <button className="send-btn" onClick={handleSendMessage} disabled={!inputMessage.trim() || isLoading} title="Send message" aria-label="Send message"><Send size={18} /></button>
               </div>
             </>
           )}

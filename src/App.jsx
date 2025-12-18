@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import Header from './components/Header'
 import HomePage from './pages/HomePage'
 import CartPage from './pages/CartPage'
@@ -24,7 +24,7 @@ const ProtectedRoute = ({ children, user }) => {
 // Keep admin-only pages secure
 const AdminRoute = ({ children, user }) => {
   if (!user) return <Navigate to="/login" replace />
-  if (!user.isAdmin) return <Navigate to="/home" replace />  // <-- was wrongly redirecting to /admin
+  if (!user.isAdmin) return <Navigate to="/home" replace />
   return children
 }
 
@@ -42,8 +42,9 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [user, setUser] = useState(null)
   const location = useLocation()
+  const navigate = useNavigate()
 
-  // Remember if user has seen the welcome screen
+  // Remember if user has seen the anonymous welcome screen
   const [welcomeDismissed, setWelcomeDismissed] = useState(() => {
     try {
       return localStorage.getItem('chatcart_welcome_dismissed') === 'true'
@@ -52,46 +53,49 @@ function App() {
     }
   })
 
+  // Show a per-user personalized welcome after login (true => show it)
+  const [showPersonalWelcome, setShowPersonalWelcome] = useState(false)
+
   // Helper functions to organize user-specific data
-  const getCartKey = (userId) => `chatcart_cart_${userId}`;
-  const getChatKey = (userId) => `chatfit-conversation-${userId}`;
+  const getCartKey = (userId) => `chatcart_cart_${userId}`
+  const getUserWelcomeKey = (userId) => `chatcart_welcome_dismissed_${userId}`
 
   // When app starts, check if user was previously logged in
   useEffect(() => {
     const checkSession = () => {
       try {
-        const session = JSON.parse(localStorage.getItem('chatcart_session') || 'null');
+        const session = JSON.parse(localStorage.getItem('chatcart_session') || 'null')
         if (session && session.user) {
-          setUser(session.user);
-          
+          setUser(session.user)
+
           // Load this user's personal shopping cart
-          const userCartKey = getCartKey(session.user.id);
-          const savedCart = localStorage.getItem(userCartKey);
+          const userCartKey = getCartKey(session.user.id)
+          const savedCart = localStorage.getItem(userCartKey)
           if (savedCart) {
             try {
-              setCart(JSON.parse(savedCart));
+              setCart(JSON.parse(savedCart))
             } catch (e) {
-              console.warn('Had trouble loading your saved cart:', e);
-              setCart([]);
+              console.warn('Had trouble loading your saved cart:', e)
+              setCart([])
             }
           }
         }
       } catch (error) {
-        console.warn('Error checking login session:', error);
+        console.warn('Error checking login session:', error)
       }
-    };
+    }
 
-    checkSession();
-  }, []);
+    checkSession()
+  }, [])
 
   // Set up admin account when app first runs
   useEffect(() => {
     const initializeAdminUser = () => {
       try {
-        const users = JSON.parse(localStorage.getItem('chatcart_users') || '[]');
-        
-        const adminExists = users.find(user => user.email === 'siespracticals@gmail.com');
-        
+        const users = JSON.parse(localStorage.getItem('chatcart_users') || '[]')
+
+        const adminExists = users.find(u => u.email === 'siespracticals@gmail.com')
+
         if (!adminExists) {
           const adminUser = {
             id: 'admin-001',
@@ -100,40 +104,39 @@ function App() {
             password: '123456',
             isAdmin: true,
             createdAt: new Date().toISOString()
-          };
-          
-          users.push(adminUser);
-          localStorage.setItem('chatcart_users', JSON.stringify(users));
-          console.log('Admin account ready: siespracticals@gmail.com / 123456');
+          }
+
+          users.push(adminUser)
+          localStorage.setItem('chatcart_users', JSON.stringify(users))
+          console.log('Admin account ready: siespracticals@gmail.com / 123456')
         }
       } catch (error) {
-        console.warn('Error setting up admin account:', error);
+        console.warn('Error setting up admin account:', error)
       }
-    };
+    }
 
-    initializeAdminUser();
-  }, []);
+    initializeAdminUser()
+  }, [])
 
   // Load products from our server
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        setLoading(true);
-        
+        setLoading(true)
+
         // Get products from our main server
-        const response = await fetch('http://localhost:4000/api/products');
-        
+        const response = await fetch('http://localhost:4000/api/products')
+
         if (!response.ok) {
-          throw new Error('Server is taking a break');
+          throw new Error('Server is taking a break')
         }
-        
-        const productsData = await response.json();
-        setProducts(productsData);
-        setLoading(false);
-        
+
+        const productsData = await response.json()
+        setProducts(productsData)
+        setLoading(false)
       } catch (error) {
-        console.error('Oops, trouble loading products:', error);
-        
+        console.error('Oops, trouble loading products:', error)
+
         // If server is down, show some basic products so users can still browse
         const fallbackProducts = [
           {
@@ -180,26 +183,25 @@ function App() {
             image: "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=300",
             brand: "Summer Bliss"
           }
-        ];
-        
-        setProducts(fallbackProducts);
-        setLoading(false);
-      }
-    };
+        ]
 
-    fetchProducts();
-  }, []);
+        setProducts(fallbackProducts)
+        setLoading(false)
+      }
+    }
+
+    fetchProducts()
+  }, [])
 
   // Remember each user's shopping cart separately
   useEffect(() => {
     if (user && !user.isAdmin) {
-      const userCartKey = getCartKey(user.id);
-      localStorage.setItem(userCartKey, JSON.stringify(cart));
+      const userCartKey = getCartKey(user.id)
+      localStorage.setItem(userCartKey, JSON.stringify(cart))
     }
-  }, [cart, user]);
+  }, [cart, user])
 
   // Add items to shopping cart with quantity support
-  
   const addToCart = (product, quantity = 1) => {
     setCart(prevCart => {
       const existingItem = prevCart.find(item => item.id === product.id)
@@ -214,6 +216,7 @@ function App() {
       }
     })
   }
+
   // Remove items from cart
   const removeFromCart = (productId) => {
     setCart(prevCart => prevCart.filter(item => item.id !== productId))
@@ -270,7 +273,7 @@ function App() {
     setCart([])
   }
 
-  // Mark welcome screen as seen
+  // Mark welcome screen as seen (anonymous welcome) and navigate to login
   const handleWelcomeComplete = () => {
     setWelcomeDismissed(true)
     try {
@@ -278,48 +281,108 @@ function App() {
     } catch (error) {
       console.warn('Could not remember welcome screen dismissal:', error)
     }
+    navigate('/login')
   }
 
   // Handle user login and load their personal data
   const handleLogin = (userData) => {
-    setUser(userData);
-    
+    setUser(userData)
+
+    // Persist session so reload keeps the user logged in
+    try {
+      localStorage.setItem('chatcart_session', JSON.stringify({ user: userData }))
+    } catch (e) {
+      console.warn('Could not persist session:', e)
+    }
+
     // Load this user's personal shopping cart
-    const userCartKey = getCartKey(userData.id);
-    const savedCart = localStorage.getItem(userCartKey);
+    const userCartKey = getCartKey(userData.id)
+    const savedCart = localStorage.getItem(userCartKey)
     if (savedCart) {
       try {
-        setCart(JSON.parse(savedCart));
+        setCart(JSON.parse(savedCart))
       } catch (e) {
-        console.warn('Had trouble loading your saved cart:', e);
-        setCart([]);
+        console.warn('Had trouble loading your saved cart:', e)
+        setCart([])
       }
     } else {
-      setCart([]); // New session starts with empty cart
+      setCart([]) // New session starts with empty cart
     }
-  };
+
+    // If admin -> immediately navigate to admin panel
+    if (userData.isAdmin) {
+      navigate('/admin')
+      return
+    }
+
+    // For regular users show a per-user personalized welcome once
+    try {
+      const userWelcomeKey = getUserWelcomeKey(userData.id)
+      const hasSeenPersonalWelcome = localStorage.getItem(userWelcomeKey) === 'true'
+      if (!hasSeenPersonalWelcome) {
+        setShowPersonalWelcome(true)
+        return
+      }
+    } catch (e) {
+      console.warn('Could not read user welcome flag:', e)
+    }
+
+    // Otherwise go to home
+    navigate('/home')
+  }
 
   // Handle new user registration
   const handleRegister = (userData) => {
-    setUser(userData);
-    setCart([]); // New users start with fresh cart
-  };
+    setUser(userData)
+
+    // Persist session
+    try {
+      localStorage.setItem('chatcart_session', JSON.stringify({ user: userData }))
+    } catch (e) {
+      console.warn('Could not persist session:', e)
+    }
+
+    // New users start with fresh cart and show personal welcome
+    setCart([])
+
+    if (userData.isAdmin) {
+      navigate('/admin')
+      return
+    }
+
+    // Show personalized welcome for newly registered user
+    setShowPersonalWelcome(true)
+  }
 
   // Handle user logout
   const handleLogout = () => {
-    setUser(null);
-    setCart([]); // Clear current cart from memory
-    localStorage.removeItem('chatcart_session');
-    
+    setUser(null)
+    setCart([]) // Clear current cart from memory
+    localStorage.removeItem('chatcart_session')
+
     // Note: We keep user's cart saved in localStorage so they can continue shopping later
-  };
+    navigate('/login')
+  }
+
+  // Personal welcome completion handler (after user logs in/registers)
+  const handlePersonalWelcomeComplete = () => {
+    try {
+      if (user && user.id) {
+        localStorage.setItem(getUserWelcomeKey(user.id), 'true')
+      }
+    } catch (e) {
+      console.warn('Could not persist personal welcome flag:', e)
+    }
+    setShowPersonalWelcome(false)
+    navigate('/home')
+  }
 
   // Organize products by category for easy display
-  const electronicsProducts = useMemo(() => 
+  const electronicsProducts = useMemo(() =>
     products.filter(p => p.category === 'electronics'), [products]
   )
 
-  const fashionProducts = useMemo(() => 
+  const fashionProducts = useMemo(() =>
     products.filter(p => p.category === 'fashion'), [products]
   )
 
@@ -331,7 +394,17 @@ function App() {
       .slice(0, 5)
   }, [products])
 
-  // Show loading screen while products are loading
+  // If a personalized welcome should be shown (post-login), show it immediately
+  if (showPersonalWelcome && user && !user.isAdmin) {
+    return (
+      <Welcome
+        onComplete={handlePersonalWelcomeComplete}
+        user={user}
+      />
+    )
+  }
+
+  // Show loading screen while products are loading (don't show for root/login/register)
   if (loading && location.pathname !== '/' && location.pathname !== '/login' && location.pathname !== '/register') {
     return (
       <div className="app">
@@ -346,7 +419,7 @@ function App() {
     )
   }
 
-  // Show welcome screen for first-time visitors
+  // Show anonymous welcome screen for first-time visitors (before login)
   if (!welcomeDismissed && location.pathname === '/') {
     return <Welcome onComplete={handleWelcomeComplete} />
   }
@@ -357,60 +430,57 @@ function App() {
       {!['/', '/login', '/register'].includes(location.pathname) && (
         <Header cartItemsCount={getTotalItems()} user={user} onLogout={handleLogout} />
       )}
-      
+
       <main className="main-content">
         <Routes>
           {/* Public pages anyone can access */}
           <Route
             path="/"
-            element={
-              !welcomeDismissed ? 
-                <Welcome onComplete={handleWelcomeComplete} /> :
-                <Navigate to="/login" replace />
-            }
+            element={<Welcome onComplete={handleWelcomeComplete} />}
           />
-          
-          <Route 
-            path="/login" 
+
+
+          <Route
+            path="/login"
             element={
               user ? <Navigate to={user.isAdmin ? "/admin" : "/home"} replace /> : <Login onLogin={handleLogin} />
-            } 
+            }
           />
-          
-          <Route 
-            path="/register" 
+
+          <Route
+            path="/register"
             element={
               user ? <Navigate to={user.isAdmin ? "/admin" : "/home"} replace /> : <Register onRegister={handleRegister} />
-            } 
+            }
           />
 
           {/* Admin-only section */}
-          <Route 
-            path="/admin" 
+          <Route
+            path="/admin"
             element={
               <AdminRoute user={user}>
                 <Admin user={user} />
               </AdminRoute>
-            } 
+            }
           />
 
           {/* Regular user shopping pages */}
-          <Route 
-            path="/home" 
+          <Route
+            path="/home"
             element={
               <UserOnlyRoute user={user}>
-                <HomePage 
+                <HomePage
                   products={products}
                   onAddToCart={addToCart}
                   featuredProducts={featuredProducts}
                   loading={loading}
                 />
               </UserOnlyRoute>
-            } 
+            }
           />
-          
-          <Route 
-            path="/electronics" 
+
+          <Route
+            path="/electronics"
             element={
               <UserOnlyRoute user={user}>
                 <CategorySection
@@ -420,11 +490,11 @@ function App() {
                   onAddToCart={addToCart}
                 />
               </UserOnlyRoute>
-            } 
+            }
           />
-          
-          <Route 
-            path="/fashion" 
+
+          <Route
+            path="/fashion"
             element={
               <UserOnlyRoute user={user}>
                 <CategorySection
@@ -434,14 +504,14 @@ function App() {
                   onAddToCart={addToCart}
                 />
               </UserOnlyRoute>
-            } 
+            }
           />
-          
-          <Route 
-            path="/cart" 
+
+          <Route
+            path="/cart"
             element={
               <UserOnlyRoute user={user}>
-                <CartPage 
+                <CartPage
                   cart={cart}
                   onUpdateQuantity={updateQuantity}
                   onRemoveFromCart={removeFromCart}
@@ -452,14 +522,14 @@ function App() {
                   totalItems={getTotalItems()}
                 />
               </UserOnlyRoute>
-            } 
+            }
           />
-          
-          <Route 
-            path="/checkout" 
+
+          <Route
+            path="/checkout"
             element={
               <UserOnlyRoute user={user}>
-                <CheckoutPage 
+                <CheckoutPage
                   cart={cart}
                   totalPrice={getTotalAmount()}
                   totalDiscount={getTotalDiscount()}
@@ -468,25 +538,25 @@ function App() {
                   user={user}
                 />
               </UserOnlyRoute>
-            } 
+            }
           />
-          
-          <Route 
-            path="/account" 
+
+          <Route
+            path="/account"
             element={
               <UserOnlyRoute user={user}>
                 <Account user={user} onLogout={handleLogout} />
               </UserOnlyRoute>
-            } 
+            }
           />
-          
-          <Route 
-            path="/orders" 
+
+          <Route
+            path="/orders"
             element={
               <UserOnlyRoute user={user}>
                 <Orders user={user} />
               </UserOnlyRoute>
-            } 
+            }
           />
 
           {/* If user tries to visit unknown page, send them somewhere sensible */}
@@ -496,7 +566,7 @@ function App() {
 
       {/* Show shopping assistant for regular users, but not on login pages or for admin */}
       {user && !user.isAdmin && !['/', '/login', '/register'].includes(location.pathname) && (
-        <ChatBot 
+        <ChatBot
           products={products}
           user={user}
           onAddToCart={addToCart}

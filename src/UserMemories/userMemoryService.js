@@ -1,4 +1,4 @@
-
+// userMemory.js
 class UserMemoryService {
   constructor() {
     this.storageKey = "chatfit-user-memories";
@@ -75,7 +75,11 @@ class UserMemoryService {
       conversationContext: {
         previouslyMentionedProducts: [],
         currentCategory: null,
-        lastUserIntent: null
+        lastUserIntent: null,
+        // lastUserQuery and lastBotResponse maintained here for session/context
+        lastUserQuery: null,
+        lastBotResponse: null,
+        lastUpdated: null
       },
 
       // Preference model
@@ -94,41 +98,41 @@ class UserMemoryService {
    * CART MANAGEMENT (RULE 5)
    * ------------------------------------------------------------- */
 
-updateCartItem(userId, product, action) {
-  const memory = this.getUserMemory(userId);
-  let cartItems = memory.cartItems || [];
+  updateCartItem(userId, product, action) {
+    const memory = this.getUserMemory(userId);
+    let cartItems = memory.cartItems || [];
 
-  if (action === 'add') {
-    const qtyToAdd = product.quantity && Number.isInteger(product.quantity) && product.quantity > 0
-      ? product.quantity
-      : 1;
+    if (action === 'add') {
+      const qtyToAdd = product.quantity && Number.isInteger(product.quantity) && product.quantity > 0
+        ? product.quantity
+        : 1;
 
-    const existingItem = cartItems.find(item => item.id === product.id);
-    if (existingItem) {
-      existingItem.quantity = (existingItem.quantity || 1) + qtyToAdd;
-      existingItem.addedAt = new Date().toISOString();
-    } else {
-      cartItems.push({
-        id: product.id,
-        title: product.title,
-        price: product.priceINR ?? product.price ?? 0,
-        category: product.category,
-        quantity: qtyToAdd,
-        addedAt: new Date().toISOString(),
-        addedViaChatbot: true
-      });
+      const existingItem = cartItems.find(item => item.id === product.id);
+      if (existingItem) {
+        existingItem.quantity = (existingItem.quantity || 1) + qtyToAdd;
+        existingItem.addedAt = new Date().toISOString();
+      } else {
+        cartItems.push({
+          id: product.id,
+          title: product.title,
+          price: product.priceINR ?? product.price ?? 0,
+          category: product.category,
+          quantity: qtyToAdd,
+          addedAt: new Date().toISOString(),
+          addedViaChatbot: !!product.addedViaChatbot // preserve if provided
+        });
+      }
+    } else if (action === 'remove') {
+      cartItems = cartItems.filter(item => item.id !== product.id);
+    } else if (action === 'update') {
+      const existingItem = cartItems.find(item => item.id === product.id);
+      if (existingItem) {
+        existingItem.quantity = product.quantity;
+      }
     }
-  } else if (action === 'remove') {
-    cartItems = cartItems.filter(item => item.id !== product.id);
-  } else if (action === 'update') {
-    const existingItem = cartItems.find(item => item.id === product.id);
-    if (existingItem) {
-      existingItem.quantity = product.quantity;
-    }
+
+    return this.updateUserMemory(userId, { cartItems });
   }
-
-  return this.updateUserMemory(userId, { cartItems });
-}
 
   // RULE 5.1 & 5.2: Get products added via chatbot vs manually
   getChatbotAddedItems(userId) {
@@ -148,15 +152,15 @@ updateCartItem(userId, product, action) {
   updateConversationContext(userId, updates) {
     const memory = this.getUserMemory(userId);
     const currentContext = memory.conversationContext || {};
-    
+
     const updatedContext = {
       ...currentContext,
       ...updates,
       lastUpdated: new Date().toISOString()
     };
 
-    return this.updateUserMemory(userId, { 
-      conversationContext: updatedContext 
+    return this.updateUserMemory(userId, {
+      conversationContext: updatedContext
     });
   }
 
@@ -164,15 +168,27 @@ updateCartItem(userId, product, action) {
   addMentionedProduct(userId, product) {
     const memory = this.getUserMemory(userId);
     const mentionedProducts = memory.conversationContext?.previouslyMentionedProducts || [];
-    
+
     // Avoid duplicates and keep only last 10
     const updatedMentioned = [
       ...mentionedProducts.filter(p => p.id !== product.id),
-      product
+      {
+        id: product.id,
+        title: product.title,
+        category: product.category
+      }
     ].slice(-10);
 
     return this.updateConversationContext(userId, {
       previouslyMentionedProducts: updatedMentioned
+    });
+  }
+
+  // Convenience: set last exchange for session context (last user query + last bot response)
+  setLastExchange(userId, lastUserQuery, lastBotResponse) {
+    return this.updateConversationContext(userId, {
+      lastUserQuery,
+      lastBotResponse
     });
   }
 
@@ -277,8 +293,7 @@ updateCartItem(userId, product, action) {
 
     const memoryNote =
       personal.length > 0
-        ? ` I remember ${personal.join(" and ")}.`
-        : "";
+        ? ` I remember ${personal.join(" and ")}.` : "";
 
     return `${greeting}, ${userName}! 👋 ${context}I'm here to help you continue exploring great products.${memoryNote}`;
   }
@@ -333,7 +348,7 @@ updateCartItem(userId, product, action) {
     }
 
     /* -------- CATEGORY MEMORY -------- */
-    if (product.category) {
+    if (product && product.category) {
       const fav = mem.favoriteCategories || [];
       const idx = fav.findIndex((c) => c.name === product.category);
 
