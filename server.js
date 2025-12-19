@@ -149,7 +149,7 @@ app.post('/api/ollama/generate', async (req, res) => {
         model: targetModel,
         prompt: finalPrompt,
         stream,
-        options: Object.keys(options).length ? options : { temperature: 0.05, top_p: 0.9, max_tokens: 30 }
+        options: Object.keys(options).length ? options : { temperature: 0.1, top_p: 0.9, max_tokens: 120 }
       }),
       signal: controller.signal
     });

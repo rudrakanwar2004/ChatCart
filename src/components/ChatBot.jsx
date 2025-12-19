@@ -125,7 +125,7 @@ User's message: ${JSON.stringify(userMessage)}
           model: 'llama3.2',
           prompt: instructionPrompt,
           stream: false,
-          options: { temperature: 0.05, top_p: 0.9, max_tokens: 30 },
+          options: { temperature: 0.1, top_p: 0.9, max_tokens: 120 },
           useProductContext: true,
           extraContext: {
             current_cart_ids: currentCartIds,
