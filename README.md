@@ -1,7 +1,10 @@
 # 🛒 ChatCart – AI-Powered E-Commerce Platform
 
+---
+
 **ChatCart** is a full-stack e-commerce demo that pairs a React (Vite) storefront with a small Express backend and an **AI shopping assistant (ChatFit)** running locally via **Ollama**.
 This repository demonstrates an Ollama proxy pattern where the server prepends a compact, cached **PRODUCT_CATALOG** to each LLM prompt so the model can answer product questions and perform cart actions reliably.
+
 ---
 
 ## ✨ Key Features
