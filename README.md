@@ -4,7 +4,7 @@
 This repository demonstrates an Ollama proxy pattern where the server prepends a compact, cached **PRODUCT_CATALOG** to each LLM prompt so the model can answer product questions and perform cart actions reliably.
 ---
 
-## ✨ Key Features (refined)
+## ✨ Key Features
 
 ### 👤 User Features
 
