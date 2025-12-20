@@ -2,8 +2,6 @@
 
 **ChatCart** is a full‑stack, demo e‑commerce application that combines a React (Vite) storefront with a small Express backend and an Ollama‑backed AI shopping assistant named **ChatFit**. The project is designed to be easy to run locally, simple to understand for beginners, and extensible for production use.
 
-This README is written for developers and evaluators who want to: clone the repo, run it locally, inspect how the AI assistant connects to the product catalog, and learn the key design decisions behind the codebase.
-
 ---
 
 ## Quick highlights
